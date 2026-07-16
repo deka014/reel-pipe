@@ -1,0 +1,2 @@
+# Python packages. ffmpeg and yt-dlp are separate programs; see README.md.
+playwright>=1.40

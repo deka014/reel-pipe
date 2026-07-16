@@ -1,0 +1,28 @@
+# --- Personal data: never commit these ---------------------------------------
+# Your series, captions, credits and hashtags. Template: config.example.toml
+config.toml
+# Your list of videos. Template: urls.example.txt
+urls.txt
+# The job database: every video, clip, schedule and posting history.
+state.db
+state.db-wal
+state.db-shm
+*.db
+# Downloads, rendered clips, thumbnails, failure screenshots, logs, the
+# posting lock, and work/profile -- the browser profile holding your logged-in
+# Instagram session. Anyone with that folder is logged in as you.
+work/
+*.log
+
+# --- Python -------------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# --- Editors and OS -----------------------------------------------------------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
