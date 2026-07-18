@@ -1,0 +1,111 @@
+# ReelPipe configuration -- example.
+#
+# Copy this file to config.toml and edit that copy:
+#
+#     copy config.example.toml config.toml
+#
+# config.toml is listed in .gitignore, so your own series, captions and
+# hashtags stay on your machine.
+#
+# Each [[series]] has an `id`. You pick the series per video by writing that id
+# next to the URL in urls.txt:
+#
+#     https://youtu.be/AAAAAAAAAAA | myshow
+#     https://youtu.be/BBBBBBBBBBB | 2
+#
+# An id can be a name or a number. It is matched ignoring case, and must not
+# contain spaces or '|'. A line with no id uses the series marked
+# `default = true`.
+#
+# Template placeholders: {part} {total} {title} {credit}
+# Use \n in overlay/caption for a line break. Emoji and non-Latin text work in
+# the overlay, e.g. "Best moments 😂\nPart {part}".
+
+[[series]]
+id            = "myshow"
+title         = "My Show - Episode 1"
+# Text burned onto the video.
+overlay       = "My Show 😂\nPart {part}"
+# Instagram caption. Hashtags below are added after it.
+caption       = "Watch Part {part} of {title}!\nCredit: {credit}"
+credit        = "Original Studio"
+# Length of each part in seconds. Instagram's API accepts reels up to 90s.
+part_seconds  = 60
+# A leftover shorter than this is merged into the previous part.
+min_tail_seconds = 8
+# Each post gets a random number of hashtags in this range, sampled from the list.
+hashtag_count = [5, 8]
+hashtags = [
+  "#example", "#throwback", "#cartoon", "#reels", "#explorepage",
+  "#childhoodmemories", "#nostalgia", "#funny", "#trending", "#foryou",
+]
+# Overlay appearance. All optional; these are the defaults.
+font          = 'C:\Windows\Fonts\arialbd.ttf'
+font_size     = 64
+font_color    = "white"
+border_width  = 4
+border_color  = "black@0.85"
+# Distance from the top of the 1080x1920 frame to the top of the text, in pixels.
+text_y        = 400
+
+# Used for any urls.txt line that names no series. At most one may be the default.
+[[series]]
+id            = "default"
+default       = true
+title         = "Throwback"
+overlay       = "Part {part}"
+caption       = "Part {part} of {total} - {title}"
+credit        = ""
+part_seconds  = 60
+min_tail_seconds = 8
+hashtag_count = [3, 5]
+hashtags = ["#throwback", "#reels", "#explorepage", "#nostalgia", "#foryou"]
+
+
+[pacing]
+# How many post times a day, and when. posts_per_day can't exceed the number
+# of times listed.
+posts_per_day   = 3
+post_times      = ["09:30", "14:00", "19:30"]
+# Randomises each slot by +/- this many minutes so posts don't land on the dot.
+jitter_minutes  = 20
+# Jitter never pushes two posts closer together than this. It is also the pace
+# at which a queue that has fallen behind catches up.
+min_gap_minutes = 45
+# A clip is retried this many times before it's parked as failed.
+max_attempts    = 3
+# How many clips go out back to back at each post time, in one browser session.
+# 3 here with three post times means 9 clips a day.
+clips_per_slot  = 1
+# Pause between two uploads in the same session, in seconds (picked at random).
+batch_gap_seconds = [45, 150]
+
+
+[encoder]
+# veryfast is the sweet spot; slower presets buy little quality at Reels bitrates.
+preset          = "veryfast"
+crf             = 20
+fps             = 30
+audio_bitrate   = "128k"
+# workers * threads_per_job should be about your logical core count.
+workers         = 4
+threads_per_job = 4
+
+
+[human]
+# How the browser is driven while posting. Everything here is about pace:
+# where the pointer travels, how the feed is scrolled, how captions are typed.
+# Set enabled = false to run at full speed while fixing selectors.
+enabled          = true
+# Scroll the feed for this many seconds before starting each post.
+browse_seconds   = [10, 30]
+# Typing speed in words per minute; one speed is picked per caption.
+# At 40-70 wpm a 300-character caption takes roughly a minute to type.
+typing_wpm       = [40, 70]
+# Chance per letter of hitting a neighbouring key, noticing, and fixing it.
+# The caption is read back and checked before sharing either way.
+typo_rate        = 0.02
+# Chance per word of a longer pause mid-caption.
+think_pause_rate = 0.06
+# Stay on the confirmation this many seconds after the post goes live.
+linger_seconds   = [4, 12]
