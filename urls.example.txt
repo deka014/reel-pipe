@@ -1,0 +1,20 @@
+# One video per line:   <youtube-url> | <series-id>
+#
+# Copy this file to urls.txt and put your own links there:
+#
+#     copy urls.example.txt urls.txt
+#
+# urls.txt is listed in .gitignore, so your list of videos stays private.
+# You can also skip this file entirely and add links from the control panel
+# (Add videos), which creates urls.txt for you.
+#
+# The series id picks which [[series]] block in config.toml is used for that
+# video: its overlay text, caption, hashtags and part length. Ids are matched
+# ignoring case. The separator can be a pipe or just a space. A line with no id
+# uses the series marked `default = true`. Lines starting with # are ignored.
+#
+# Run `reelpipe doctor` after editing to check every id resolves.
+
+https://www.youtube.com/watch?v=AAAAAAAAAAA | myshow
+https://youtu.be/BBBBBBBBBBB myshow
+https://youtu.be/CCCCCCCCCCC
