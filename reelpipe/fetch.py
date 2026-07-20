@@ -70,3 +70,74 @@ def resolve_id(url: str) -> str:
     return proc.stdout.strip().splitlines()[0]
 
 
+def existing_download(youtube_id: str) -> Path | None:
+    """Find an already-downloaded file for this id, whatever extension it landed with."""
+    for candidate in sorted(config.DOWNLOADS.glob(f"{youtube_id}.*")):
+        if candidate.suffix.lower() in {".mp4", ".mkv", ".webm", ".mov", ".m4v"}:
+            return candidate
+    return None
+
+
+def download(url: str) -> Fetched:
+    """Download one video, skipping the transfer if the file is already on disk."""
+    config.DOWNLOADS.mkdir(parents=True, exist_ok=True)
+    out_template = str(config.DOWNLOADS / "%(id)s.%(ext)s")
+
+    cmd = [
+        ytdlp_path(),
+        "--no-playlist",
+        "--no-progress",
+        "--no-warnings",
+        "--newline",
+        "-f", FORMAT_SPEC,
+        "--merge-output-format", "mp4",
+        "-o", out_template,
+        # Reuse the file if it is already there rather than downloading again.
+        "--no-overwrites",
+        # One JSON blob per video gives us id, title and duration without a second call.
+        "--print-json",
+        url,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise FetchError(f"yt-dlp failed for {url}:\n{proc.stderr.strip()[-1500:]}")
+
+    info = _parse_info(proc.stdout)
+    if info is None:
+        raise FetchError(f"yt-dlp produced no metadata for {url}")
+
+    youtube_id = str(info.get("id") or "")
+    title = str(info.get("title") or youtube_id)
+    try:
+        duration = float(info.get("duration") or 0.0)
+    except (TypeError, ValueError):
+        duration = 0.0
+
+    path = existing_download(youtube_id)
+    if path is None:
+        # Fall back to the path yt-dlp reported if the glob missed it.
+        reported = info.get("_filename") or info.get("filename")
+        if reported and Path(reported).exists():
+            path = Path(reported)
+    if path is None:
+        raise FetchError(
+            f"yt-dlp reported success for {youtube_id} but no output file was found "
+            f"in {config.DOWNLOADS}"
+        )
+
+    return Fetched(youtube_id=youtube_id, title=title, duration=duration, path=path)
+
+
+def _parse_info(stdout: str) -> dict | None:
+    """Take the last JSON object from yt-dlp's output.
+
+    Progress lines and warnings can share stdout, so scan rather than assume.
+    """
+    for line in reversed(stdout.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+    return None
