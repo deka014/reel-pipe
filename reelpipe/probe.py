@@ -106,3 +106,38 @@ def probe(path: Path) -> MediaInfo:
         duration=duration,
         width=int(video.get("width") or 0),
         height=int(video.get("height") or 0),
+        # The old pipeline assumed audio existed and crashed on silent sources.
+        has_audio=any(s.get("codec_type") == "audio" for s in streams),
+        fps=_parse_fps(video.get("r_frame_rate")),
+    )
+
+
+def plan_parts(duration: float, part_seconds: int, min_tail_seconds: int) -> list[Part]:
+    """Cut `duration` into parts of `part_seconds`.
+
+    A trailing remainder shorter than `min_tail_seconds` is merged into the previous
+    part instead of becoming its own stub post.
+    """
+    if duration <= 0:
+        return []
+    if duration <= part_seconds:
+        return [Part(1, 0.0, duration)]
+
+    parts: list[Part] = []
+    start = 0.0
+    part_no = 1
+    while start < duration:
+        remaining = duration - start
+        if remaining <= part_seconds:
+            parts.append(Part(part_no, start, remaining))
+            break
+        # Would the leftover after this part be too short to stand alone?
+        tail = remaining - part_seconds
+        if tail < min_tail_seconds:
+            parts.append(Part(part_no, start, remaining))
+            break
+        parts.append(Part(part_no, start, float(part_seconds)))
+        start += part_seconds
+        part_no += 1
+
+    return parts
