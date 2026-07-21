@@ -70,3 +70,39 @@ def probe(path: Path) -> MediaInfo:
 
     cmd = [
         ffprobe_path(),
+        "-v", "error",
+        "-print_format", "json",
+        "-show_format",
+        "-show_streams",
+        str(path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise ProbeError(f"ffprobe failed on {path.name}: {proc.stderr.strip()}")
+
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise ProbeError(f"Could not parse ffprobe output for {path.name}") from exc
+
+    streams = data.get("streams", [])
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    if video is None:
+        raise ProbeError(f"No video stream in {path.name}")
+
+    # The container duration is more reliable than the stream's for trimmed files.
+    duration = 0.0
+    for candidate in (data.get("format", {}).get("duration"), video.get("duration")):
+        try:
+            duration = float(candidate)
+            if duration > 0:
+                break
+        except (TypeError, ValueError):
+            continue
+    if duration <= 0:
+        raise ProbeError(f"Could not determine duration of {path.name}")
+
+    return MediaInfo(
+        duration=duration,
+        width=int(video.get("width") or 0),
+        height=int(video.get("height") or 0),
