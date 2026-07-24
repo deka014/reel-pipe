@@ -153,3 +153,157 @@ class Human:
             eased = t * t * (3 - 2 * t)  # slow start, quick middle, slow finish
             bx = _bezier(sx, c1x, c2x, x, eased) + self.rng.gauss(0, 0.6)
             by = _bezier(sy, c1y, c2y, y, eased) + self.rng.gauss(0, 0.6)
+            self.page.mouse.move(bx, by)
+            self.wait_ms(step_ms)
+        self.page.mouse.move(x, y)
+        self.x, self.y = x, y
+
+    def click(self, locator: Locator) -> None:
+        """Move to the element and click it, near the middle but not dead centre."""
+        if not self.enabled:
+            locator.click()
+            return
+
+        box = locator.bounding_box()
+        if box is None or not self._in_viewport(box):
+            locator.scroll_into_view_if_needed()
+            self.wait_ms(self.rng.uniform(250, 600))
+            box = locator.bounding_box()
+        if box is None:
+            locator.click()
+            return
+
+        fx = _clamp(self.rng.gauss(0.5, 0.14), 0.2, 0.8)
+        fy = _clamp(self.rng.gauss(0.5, 0.14), 0.25, 0.75)
+        tx = box["x"] + box["width"] * fx
+        ty = box["y"] + box["height"] * fy
+        self.move_to(tx, ty)
+
+        # If something else sits on top of the target (a popover, a toast), a raw
+        # mouse click would land on that instead; let Playwright's checked click
+        # handle it and report clearly.
+        if not self._hits(locator, self.x, self.y):
+            locator.click()
+            return
+
+        self.wait_ms(self.rng.uniform(80, 350))  # hover before pressing
+        self.page.mouse.down()
+        self.wait_ms(self.rng.uniform(55, 130))
+        self.page.mouse.up()
+
+    def _in_viewport(self, box: dict) -> bool:
+        return (
+            box["y"] >= 0
+            and box["x"] >= 0
+            and box["y"] + box["height"] <= self.vh
+            and box["x"] + box["width"] <= self.vw
+        )
+
+    @staticmethod
+    def _hits(locator: Locator, x: float, y: float) -> bool:
+        try:
+            return bool(
+                locator.evaluate(
+                    "(el, p) => { const h = document.elementFromPoint(p.x, p.y);"
+                    " return !!h && (el === h || el.contains(h)); }",
+                    {"x": x, "y": y},
+                )
+            )
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------ scrolling
+
+    def browse_feed(self, seconds: float) -> None:
+        """Scroll the feed the way people do: a flick of the wheel, then a look."""
+        if not self.enabled or seconds <= 0:
+            return
+        # The wheel scrolls whatever is under the pointer, so rest it on the feed.
+        self.move_to(
+            self.vw * self.rng.uniform(0.4, 0.6),
+            self.vh * self.rng.uniform(0.35, 0.65),
+        )
+        deadline = time.monotonic() + seconds * self.time_scale
+        while time.monotonic() < deadline:
+            # Occasionally scroll back up to look at something again.
+            direction = -1 if self.rng.random() < 0.12 else 1
+            for _ in range(self.rng.randint(2, 6)):
+                self.page.mouse.wheel(0, direction * self.rng.uniform(80, 130))
+                self.wait_ms(self.rng.uniform(25, 70))
+            self.pause(0.8, 3.5)
+
+    # ------------------------------------------------------------------ typing
+
+    def type_text(self, text: str, allow_typos: bool = True) -> None:
+        """Type into the focused element with an uneven, human rhythm.
+
+        Hashtags and mentions open a suggestion list; pressing Enter while it is
+        open would pick a suggestion instead of starting a new line, so a space
+        closes the token before any newline and at the very end.
+        """
+        kb = self.page.keyboard
+        wpm = self.rng.uniform(*self.cfg.typing_wpm)
+        base_ms = 60_000 / (wpm * 5)  # a "word" is five characters by convention
+        typo_rate = self.cfg.typo_rate if (allow_typos and self.enabled) else 0.0
+
+        token = ""
+        i = 0
+        n = len(text)
+        while i < n:
+            ch = text[i]
+
+            if ch == "\n":
+                token = self._close_token(token)
+                kb.press("Enter")
+                self._key_delay(base_ms, ch)
+                i += 1
+                continue
+
+            if ord(ch) > 127:
+                # Emoji and non-Latin script come from a picker or an IME in real
+                # life, arriving as a unit rather than keystroke by keystroke.
+                j = i
+                while j < n and ord(text[j]) > 127:
+                    j += 1
+                self.pause(0.3, 1.2)
+                kb.insert_text(text[i:j])
+                token += text[i:j]
+                self._key_delay(base_ms, text[j - 1])
+                i = j
+                continue
+
+            lower = ch.lower()
+            if typo_rate and lower in NEIGHBOURS and self.rng.random() < typo_rate:
+                wrong = self.rng.choice(NEIGHBOURS[lower])
+                kb.type(wrong.upper() if ch.isupper() else wrong)
+                self.wait_ms(self.rng.uniform(120, 420))  # noticing the slip
+                kb.press("Backspace")
+                self.wait_ms(self.rng.uniform(70, 220))
+
+            kb.type(ch)
+            token = "" if ch == " " else token + ch
+            self._key_delay(base_ms, ch)
+
+            if ch == " " and self.rng.random() < self.cfg.think_pause_rate:
+                self.pause(0.8, 2.6)
+            i += 1
+
+        self._close_token(token)
+
+    def _close_token(self, token: str) -> str:
+        if len(token) > 1 and token[0] in "#@":
+            self.page.keyboard.type(" ")
+            self.wait_ms(self.rng.uniform(120, 300))
+        return ""
+
+    def _key_delay(self, base_ms: float, ch: str) -> None:
+        if not self.enabled:
+            return
+        delay = base_ms * self.rng.lognormvariate(0, 0.35)
+        if ch == "\n":
+            delay += self.rng.uniform(400, 1400)
+        elif ch in PUNCTUATION:
+            delay += self.rng.uniform(150, 500)
+        elif ch == " ":
+            delay += self.rng.uniform(0, 90)
+        self.wait_ms(delay)
