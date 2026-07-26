@@ -259,3 +259,264 @@ def cmd_prepare(args: argparse.Namespace) -> int:
                     "UPDATE clips SET caption=? WHERE id=? AND caption=''",
                     (caption, clip_id),
                 )
+            state.mark_video(conn, int(row["id"]), "split")
+            conn.commit()
+            audio = "" if info.has_audio else " [no audio]"
+            _print(
+                f"  [ok] [{series.id}] {row['title'][:44]}: {total} part(s) "
+                f"of <= {series.part_seconds}s{audio}"
+            )
+
+        # 4. Render everything still pending, in parallel.
+        pending = state.clips_needing_render(conn)
+        if not pending:
+            _print("\nNothing to render.")
+        else:
+            _print(f"\nRendering {len(pending)} clip(s) "
+                   f"({cfg.encoder.workers} at a time)...")
+            jobs = []
+            for row in pending:
+                series = cfg.series_for_id(row["series_id"])
+                jobs.append(
+                    RenderJob(
+                        clip_id=int(row["id"]),
+                        source=Path(row["source_path"]),
+                        output=render.clip_filename(
+                            row["youtube_id"], int(row["part_no"]),
+                            int(row["total_parts"]),
+                        ),
+                        start=float(row["start_s"]),
+                        duration=float(row["duration_s"]),
+                        overlay_text=row["overlay_text"],
+                        series=series,
+                    )
+                )
+
+            started = time.perf_counter()
+            done = [0]
+
+            def report(result: render.RenderResult) -> None:
+                done[0] += 1
+                tag = "ok" if result.ok else "fail"
+                _print(f"  [{tag}] ({done[0]}/{len(jobs)}) {result.output.name}")
+
+            results = render.render_all(jobs, cfg.encoder, on_done=report)
+            elapsed = time.perf_counter() - started
+
+            for result in results:
+                if result.ok:
+                    state.mark_rendered(conn, result.clip_id, result.output)
+                else:
+                    state.mark_clip_error(conn, result.clip_id, "render", result.error)
+            conn.commit()
+
+            good = sum(1 for r in results if r.ok)
+            _print(f"\nRendered {good}/{len(results)} clip(s) in {elapsed:.1f}s.")
+            for result in results:
+                if not result.ok:
+                    _print(f"  error on clip {result.clip_id}: {result.error[:300]}")
+
+        # 5. Hand out schedule slots.
+        assigned = schedule.assign_slots(conn, cfg.pacing)
+        conn.commit()
+        if assigned:
+            _print(f"Queued {assigned} clip(s) on the drip schedule.")
+        nxt = state.next_due_time(conn)
+        if nxt:
+            _print(f"Next post due: {nxt}")
+
+    return 0
+
+
+# ------------------------------------------------------------------------- status
+
+def cmd_status(args: argparse.Namespace) -> int:
+    with state.session() as conn:
+        counts = state.counts(conn)
+        _print("Queue")
+        _print("=" * 52)
+        for status in state.CLIP_STATUSES:
+            _print(f"  {status:<10} {counts[status]:>5}")
+        total = sum(counts.values())
+        _print(f"  {'total':<10} {total:>5}")
+
+        nxt = state.next_due_time(conn)
+        _print(f"\nNext due: {nxt or '-- nothing queued --'}")
+
+        upcoming = conn.execute(
+            "SELECT c.scheduled_for, c.part_no, c.total_parts, v.title "
+            "FROM clips c JOIN videos v ON v.id=c.video_id "
+            "WHERE c.status='queued' ORDER BY c.scheduled_for LIMIT 10"
+        ).fetchall()
+        if upcoming:
+            _print("\nUpcoming:")
+            for row in upcoming:
+                _print(
+                    f"  {row['scheduled_for']}  "
+                    f"part {row['part_no']}/{row['total_parts']}  "
+                    f"{(row['title'] or '')[:40]}"
+                )
+
+        failures = state.failed_clips(conn)
+        if failures:
+            _print(f"\nFailed ({len(failures)}):")
+            for row in failures:
+                _print(
+                    f"  clip {row['id']} part {row['part_no']}  "
+                    f"step={row['last_failed_step']}  "
+                    f"{(row['last_error'] or '')[:80]}"
+                )
+            _print("  Fix the selector, then run: reelpipe retry")
+    return 0
+
+
+# --------------------------------------------------------------------------- show
+
+def _table(rows: list, columns: list[str], max_width: int = 44) -> None:
+    """Print rows as an aligned table, truncating long cells."""
+    if not rows:
+        _print("  (no rows)")
+        return
+
+    def cell(row, col: str) -> str:
+        value = row[col]
+        if value is None:
+            return "-"
+        text = str(value).replace("\n", " / ")
+        return text if len(text) <= max_width else text[: max_width - 1] + "…"
+
+    widths = {
+        c: max(len(c), max((len(cell(r, c)) for r in rows), default=0))
+        for c in columns
+    }
+    _print("  " + "  ".join(c.ljust(widths[c]) for c in columns))
+    _print("  " + "  ".join("-" * widths[c] for c in columns))
+    for row in rows:
+        _print("  " + "  ".join(cell(row, c).ljust(widths[c]) for c in columns))
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    try:
+        conn = state.connect_readonly()
+    except FileNotFoundError:
+        _print(f"No database yet at {config.DB_PATH}. Run `reelpipe prepare` first.")
+        return 1
+
+    try:
+        # Arbitrary read-only query, for anything the presets don't cover.
+        if args.sql:
+            try:
+                rows = conn.execute(args.sql).fetchall()
+            except sqlite3.Error as exc:
+                _print(f"SQL error: {exc}")
+                return 1
+            if not rows:
+                _print("  (no rows)")
+                return 0
+            _table(rows, list(rows[0].keys()), max_width=args.width)
+            _print(f"\n  {len(rows)} row(s)")
+            return 0
+
+        # One clip in full, including the untruncated caption.
+        if args.clip is not None:
+            row = conn.execute(
+                "SELECT c.*, v.title AS video_title, v.youtube_id, v.series_id "
+                "FROM clips c JOIN videos v ON v.id=c.video_id WHERE c.id=?",
+                (args.clip,),
+            ).fetchone()
+            if row is None:
+                _print(f"No clip with id {args.clip}.")
+                return 1
+            _print(f"Clip {row['id']}")
+            _print("=" * 52)
+            for key in row.keys():
+                if key == "caption":
+                    continue
+                _print(f"  {key:<17} {row[key]}")
+            _print("\n  caption:")
+            for line in (row["caption"] or "").splitlines():
+                _print(f"    {line}")
+            return 0
+
+        what = args.table or "all"
+
+        if what in ("all", "videos"):
+            rows = conn.execute(
+                "SELECT id, youtube_id, series_id, status, "
+                "       ROUND(duration_s) AS secs, title "
+                "FROM videos ORDER BY id"
+            ).fetchall()
+            _print(f"videos ({len(rows)})")
+            _table(rows, ["id", "youtube_id", "series_id", "status", "secs", "title"],
+                   args.width)
+            _print("")
+
+        if what in ("all", "clips"):
+            sql = (
+                "SELECT c.id, c.video_id AS vid, c.part_no AS part, "
+                "       c.total_parts AS of, ROUND(c.duration_s) AS secs, "
+                "       c.status, c.scheduled_for, c.attempts AS tries, "
+                "       c.last_failed_step AS failed_at "
+                "FROM clips c"
+            )
+            params: list = []
+            if args.status:
+                sql += " WHERE c.status = ?"
+                params.append(args.status)
+            sql += " ORDER BY c.video_id, c.part_no"
+            rows = conn.execute(sql, params).fetchall()
+            label = f"clips ({len(rows)})" + (f" status={args.status}" if args.status else "")
+            _print(label)
+            _table(rows, ["id", "vid", "part", "of", "secs", "status",
+                          "scheduled_for", "tries", "failed_at"], args.width)
+            _print("")
+
+        if what in ("all", "hashtags"):
+            rows = conn.execute(
+                "SELECT id, clip_id, tag_set_hash, used_at "
+                "FROM hashtag_history ORDER BY id DESC LIMIT 10"
+            ).fetchall()
+            _print(f"hashtag_history (last {len(rows)})")
+            _table(rows, ["id", "clip_id", "tag_set_hash", "used_at"], args.width)
+
+        if what == "all":
+            _print("\nTip: `reelpipe show --clip <id>` for one clip's full caption,")
+            _print("     `reelpipe show --sql \"SELECT ...\"` for anything else.")
+    finally:
+        conn.close()
+
+    return 0
+
+
+# -------------------------------------------------------------------------- login
+
+def cmd_login(args: argparse.Namespace) -> int:
+    config.ensure_dirs()
+    _print("Opening Chrome with the ReelPipe profile.")
+    _print("Log into Instagram by hand in that window; the session is then reused.")
+    _print("Nothing is typed for you and no credentials are stored by this tool.\n")
+
+    with upload.browser(headless=False) as session_:
+        page = session_.page
+        upload.open_instagram(page)
+
+        if upload.is_logged_in(page):
+            _print("Already logged in -- nothing to do.")
+            return 0
+
+        _print("Waiting for you to finish logging in (up to 5 minutes)...")
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            if upload.is_logged_in(page):
+                upload.dismiss_dialogs(page)
+                page.wait_for_timeout(1_500)
+                _print("\nLogged in. Session saved to the profile directory.")
+                return 0
+            page.wait_for_timeout(2_000)
+
+        _print("\nTimed out waiting for login.")
+        return 1
+
+
+# --------------------------------------------------------------------------- post
+
