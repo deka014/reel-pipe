@@ -520,3 +520,262 @@ def cmd_login(args: argparse.Namespace) -> int:
 
 # --------------------------------------------------------------------------- post
 
+def _test_overrides() -> tuple[str, bool, float]:
+    """Hooks for the test suite: point uploads at a mock page, run headless and
+    compress every pause. Never set in normal use."""
+    url = os.environ.get("REELPIPE_TEST_URL") or upload.INSTAGRAM
+    headless = bool(os.environ.get("REELPIPE_TEST_URL"))
+    try:
+        speed = float(os.environ.get("REELPIPE_TEST_SPEED", "1"))
+    except ValueError:
+        speed = 1.0
+    return url, headless, speed
+
+
+def cmd_post(args: argparse.Namespace) -> int:
+    cfg = config.load()
+    config.ensure_dirs()
+    if args.dry_run:
+        return _post(args, cfg)
+    try:
+        # Taken before anything else: recovering "stuck" clips is only safe
+        # once we know no other run is in the middle of uploading them.
+        with post_lock():
+            return _post(args, cfg)
+    except Busy:
+        _print("Another posting run is in progress; nothing started.")
+        return 3
+
+
+def _post(args: argparse.Namespace, cfg: config.Config) -> int:
+    upload_url, headless, speed = _test_overrides()
+
+    with state.session() as conn:
+        # A run killed before Share is safe to redo; one killed after Share
+        # might have published, so that clip is parked for a manual check.
+        recovered = 0 if args.dry_run else state.reset_stuck_posting(conn)
+        if recovered:
+            _print(f"Recovered {recovered} clip(s) left mid-upload by an earlier run.")
+        parked = 0 if args.dry_run else state.park_stuck_sharing(conn)
+        if parked:
+            _print(
+                f"{parked} clip(s) were interrupted after Share was clicked and may be "
+                "live. They are marked failed; check the profile, then `reelpipe retry` "
+                "any that didn't post."
+            )
+        conn.commit()
+
+        if args.ids:
+            wanted = [int(x) for x in args.ids.split(",") if x.strip()]
+            found = state.clips_by_ids(conn, wanted)
+            clips = [c for c in found if c["status"] == "queued"]
+            left_out = len(wanted) - len(clips)
+            _print(
+                f"Posting {len(clips)} chosen clip(s) now."
+                + (f" ({left_out} not in the queue, left out.)" if left_out else "")
+            )
+        elif args.next is not None:
+            clips = state.next_clips(conn, args.next)
+            _print(f"Posting the next {len(clips)} queued clip(s) now.")
+        else:
+            # Scheduled mode. One slot's worth per run, and never sooner than
+            # the minimum gap after the last post, so a queue that has fallen
+            # behind drains at the normal pace instead of all at once.
+            limit = args.limit if args.limit is not None else cfg.pacing.clips_per_slot
+            clips = state.due_clips(conn, datetime.now(), limit=limit)
+            _print(f"{len(clips)} clip(s) due.")
+            last = state.last_posted_time(conn)
+            gap = timedelta(minutes=cfg.pacing.min_gap_minutes)
+            if clips and last is not None and datetime.now() - last < gap:
+                wait = gap - (datetime.now() - last)
+                _print(
+                    f"Last post was at {last:%H:%M}; holding for the "
+                    f"{cfg.pacing.min_gap_minutes}-minute gap "
+                    f"({int(wait.total_seconds() // 60) + 1} min left)."
+                )
+                return 0
+
+        if not clips:
+            nxt = state.next_due_time(conn)
+            _print(f"Nothing to do. Next due: {nxt or '-- nothing queued --'}")
+            return 0
+
+        if args.dry_run:
+            for row in clips:
+                _print(f"\n  clip {row['id']}  part {row['part_no']}/{row['total_parts']}")
+                _print(f"  file: {row['path']}")
+                _print(f"  caption:\n{row['caption']}")
+            _print("\nDry run -- nothing was uploaded.")
+            return 0
+
+        posted = 0
+        with upload.browser(headless=headless) as session_:
+            page = session_.page
+            human = Human(page, cfg.human, time_scale=speed)
+            for index, row in enumerate(clips):
+                clip_id = int(row["id"])
+                if not state.claim_for_posting(conn, clip_id):
+                    # Skipped, removed or re-ordered away from the control
+                    # panel while earlier clips in this batch were uploading.
+                    _print(f"  [skip] clip {clip_id} is no longer in the queue")
+                    continue
+                # Read it again: its caption may have been edited since the
+                # batch was put together.
+                fresh = state.clips_by_ids(conn, [clip_id])
+                if fresh:
+                    row = fresh[0]
+
+                label = f"part {row['part_no']}/{row['total_parts']} of {(row['video_title'] or '')[:36]}"
+                _print(f"\n  uploading clip {clip_id}: {label}")
+
+                try:
+                    upload.upload_clip(
+                        page, Path(row["path"]), row["caption"], human, clip_id,
+                        url=upload_url,
+                        on_share=lambda cid=clip_id: state.mark_sharing(conn, cid),
+                    )
+                    state.mark_posted(conn, clip_id)
+                    posted += 1
+                    _print(f"  [ok] posted clip {clip_id}")
+                except upload.UploadError as exc:
+                    shot = upload.save_failure_artifacts(page, clip_id, exc.step)
+                    if exc.abort_run:
+                        # Not this clip's fault, so it keeps its retries.
+                        state.release_claim(conn, clip_id)
+                        _print(f"  [stop] {exc}")
+                        _print(f"         screenshot: {shot}")
+                        _print("         clip returned to the queue; no retries used.")
+                        break
+                    if exc.step == "share_failed":
+                        # An explicit "couldn't be shared" from Instagram means
+                        # nothing is live, so this one may be retried like any
+                        # failure before Share.
+                        state.unmark_sharing(conn, clip_id)
+                    status = state.mark_failed(
+                        conn, clip_id, exc.step, exc.message,
+                        cfg.pacing.max_attempts if exc.retryable else 0,
+                    )
+                    _print(f"  [fail] {exc}")
+                    _print(f"         screenshot: {shot}")
+                    _print(f"         clip is now '{status}'")
+                    if status == "failed" and not exc.retryable:
+                        _print("         It may have been published. Check the profile;")
+                        _print("         if it isn't there, `reelpipe retry` re-queues it.")
+                except Exception as exc:  # noqa: BLE001
+                    shot = upload.save_failure_artifacts(page, clip_id, "unknown")
+                    status = state.mark_failed(
+                        conn, clip_id, "unknown", str(exc), cfg.pacing.max_attempts
+                    )
+                    _print(f"  [fail] unexpected: {exc}")
+                    _print(f"         screenshot: {shot}")
+                    _print(f"         clip is now '{status}'")
+
+                # Space out consecutive posts in the same run.
+                if index < len(clips) - 1:
+                    pause = random.uniform(*cfg.pacing.batch_gap_seconds)
+                    _print(f"  waiting {pause:.0f}s before the next upload...")
+                    time.sleep(pause * speed)
+
+        _print(f"\nPosted {posted}/{len(clips)} clip(s).")
+    return 0
+
+
+# -------------------------------------------------------------------------- retry
+
+def cmd_retry(args: argparse.Namespace) -> int:
+    with state.session() as conn:
+        n = state.reset_failed(conn)
+        n += state.reset_stuck_posting(conn)
+        conn.commit()
+    _print(f"Re-queued {n} clip(s).")
+    return 0
+
+
+# ----------------------------------------------------------------------------- ui
+
+def cmd_ui(args: argparse.Namespace) -> int:
+    from . import server
+
+    config.load()  # fail early, in the terminal, on a broken config
+    config.ensure_dirs()
+    return server.run(port=args.port, open_browser=not args.no_open)
+
+
+# ---------------------------------------------------------------------------- main
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="reelpipe",
+        description="YouTube backlog to Instagram Reels, unattended.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("doctor", help="check tools, config and encode speed")
+    p.add_argument("--no-benchmark", action="store_true",
+                   help="skip the encode speed test")
+    p.set_defaults(func=cmd_doctor)
+
+    p = sub.add_parser("login", help="log into Instagram once, by hand")
+    p.set_defaults(func=cmd_login)
+
+    p = sub.add_parser(
+        "prepare", help="download, split, render and queue everything in urls.txt"
+    )
+    p.set_defaults(func=cmd_prepare)
+
+    p = sub.add_parser("status", help="show the queue")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("show", help="inspect the database (read-only)")
+    p.add_argument("table", nargs="?", choices=["videos", "clips", "hashtags"],
+                   help="which table to dump (default: all of them)")
+    p.add_argument("--clip", type=int, metavar="ID",
+                   help="show one clip in full, including its caption")
+    p.add_argument("--status", metavar="S",
+                   help="only clips with this status, e.g. queued, posted, failed")
+    p.add_argument("--sql", metavar="QUERY",
+                   help="run any read-only SQL query against the database")
+    p.add_argument("--width", type=int, default=44,
+                   help="truncate cells wider than this (default 44)")
+    p.set_defaults(func=cmd_show)
+
+    p = sub.add_parser("post", help="upload clips that are due")
+    p.add_argument("--due", action="store_true",
+                   help="post everything whose slot has arrived (default)")
+    p.add_argument("--next", type=int, metavar="N",
+                   help="post the next N queued clips now, ignoring the schedule")
+    p.add_argument("--ids", metavar="ID,ID,...",
+                   help="post exactly these queued clips now, in this order")
+    p.add_argument("--limit", type=int, default=None,
+                   help="cap how many due clips this run posts "
+                        "(default: pacing.clips_per_slot)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="show what would be posted without opening a browser")
+    p.set_defaults(func=cmd_post)
+
+    p = sub.add_parser("retry", help="re-queue failed clips")
+    p.set_defaults(func=cmd_retry)
+
+    p = sub.add_parser("ui", help="open the control panel in your browser")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--no-open", action="store_true",
+                   help="start the server without opening a browser tab")
+    p.set_defaults(func=cmd_ui)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return int(args.func(args))
+    except ConfigError as exc:
+        _print(f"Config error: {exc}")
+        return 1
+    except KeyboardInterrupt:
+        _print("\nInterrupted.")
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
