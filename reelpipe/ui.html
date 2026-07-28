@@ -1,0 +1,877 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReelPipe</title>
+<style>
+  :root {
+    --bg: #f5f5f2; --card: #ffffff; --text: #1c1c21; --muted: #6c6c78; --line: #e2e2dd;
+    --accent: #4b45d6; --accent-ink: #ffffff; --soft: #eeedfb;
+    --ok: #18794e; --ok-bg: #e3f4ea; --bad: #c0362c; --bad-bg: #fbe9e7;
+    --warn: #8a5a00; --warn-bg: #fdf1d3; --idle: #5d5d68; --idle-bg: #ececea;
+    --info: #1f5fbf; --info-bg: #e4eefc; --shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101013; --card: #19191e; --text: #ececf2; --muted: #9b9ba8; --line: #2b2b33;
+      --accent: #8f89ff; --accent-ink: #0f0f14; --soft: #24233a;
+      --ok: #5fd39a; --ok-bg: #153325; --bad: #ff8a7d; --bad-bg: #3a1b18;
+      --warn: #f2c35c; --warn-bg: #3a2e12; --idle: #a8a8b4; --idle-bg: #26262d;
+      --info: #86b6ff; --info-bg: #172840; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scrollbar-gutter: stable; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+
+  header { position: sticky; top: 0; z-index: 20; background: var(--card);
+           border-bottom: 1px solid var(--line); }
+  .top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 0 10px; }
+  .brand { font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
+  .stats { display: flex; gap: 14px; color: var(--muted); flex-wrap: wrap; }
+  .stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+  .auto { display: flex; align-items: center; gap: 10px; }
+  .auto small { color: var(--muted); display: block; line-height: 1.2; }
+
+  nav { display: flex; gap: 2px; overflow-x: auto; }
+  nav button { background: none; border: 0; padding: 9px 12px; cursor: pointer; color: var(--muted);
+               border-bottom: 2px solid transparent; white-space: nowrap; }
+  nav button:hover { color: var(--text); }
+  nav button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .dot { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 5px; border-radius: 9px;
+         background: var(--bad-bg); color: var(--bad); font-size: 11px; font-weight: 600; text-align: center; }
+  .dot.run { background: var(--warn-bg); color: var(--warn); }
+
+  main { padding: 18px 0 60px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          box-shadow: var(--shadow); padding: 16px; margin-bottom: 14px; }
+  .card h2 { margin: 0 0 4px; font-size: 15px; }
+  .card p.help { margin: 0 0 12px; color: var(--muted); }
+  h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+       margin: 18px 0 8px; font-weight: 600; }
+
+  .btn { border: 1px solid var(--line); background: var(--card); padding: 6px 11px; border-radius: 7px;
+         cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.danger { color: var(--bad); }
+  .btn.small { padding: 3px 8px; font-size: 12.5px; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn:focus-visible, nav button:focus-visible, .switch input:focus-visible + span,
+  input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input[type=text], input[type=number], input[type=time], input[type=datetime-local], select, textarea {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; }
+  textarea { width: 100%; resize: vertical; }
+
+  .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex: none; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+  .switch span { position: absolute; inset: 0; background: var(--idle-bg); border: 1px solid var(--line);
+                 border-radius: 11px; transition: background .15s; }
+  .switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+                        border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
+  .switch input:checked + span { background: var(--accent); border-color: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(18px); background: var(--accent-ink); }
+
+  .banner { border-radius: 10px; padding: 11px 14px; margin-bottom: 14px; display: flex; gap: 12px;
+            align-items: center; flex-wrap: wrap; }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); }
+  .banner.bad { background: var(--bad-bg); color: var(--bad); }
+  .banner.info { background: var(--info-bg); color: var(--info); }
+  .banner .spacer { flex: 1; }
+
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--card); }
+  .seg button { border: 0; background: none; padding: 6px 12px; cursor: pointer; color: var(--muted); }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--soft); color: var(--text); font-weight: 600; }
+  .stepper { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .stepper button { border: 0; background: var(--card); width: 28px; height: 30px; cursor: pointer; }
+  .stepper output { min-width: 30px; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .selbar { position: sticky; top: 96px; z-index: 10; background: var(--accent); color: var(--accent-ink);
+            border-radius: 9px; padding: 8px 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+            margin-bottom: 12px; }
+  .selbar .btn { background: transparent; border-color: currentColor; color: inherit; }
+
+  .slot { display: flex; align-items: baseline; gap: 10px; margin: 16px 2px 6px; }
+  .slot b { font-size: 13px; }
+  .slot span { color: var(--muted); font-size: 12.5px; }
+  .slot.late b { color: var(--warn); }
+  .list { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .row { display: grid; grid-template-columns: 22px 18px 40px minmax(0, 1fr) auto; gap: 10px; align-items: center;
+         padding: 8px 12px; border-top: 1px solid var(--line); cursor: pointer; }
+  .row:first-child { border-top: 0; }
+  .row:hover { background: color-mix(in srgb, var(--soft) 55%, transparent); }
+  .row.sel { background: var(--soft); }
+  .row.over-top { box-shadow: inset 0 2px 0 var(--accent); }
+  .row.over-bottom { box-shadow: inset 0 -2px 0 var(--accent); }
+  .row.dragging { opacity: .4; }
+  .grip { cursor: grab; color: var(--muted); user-select: none; text-align: center; letter-spacing: -2px; }
+  .grip.off { visibility: hidden; }
+  .thumb { width: 40px; height: 71px; border-radius: 5px; background: var(--idle-bg); object-fit: cover; display: block; }
+  .what { min-width: 0; }
+  .what .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .what .c { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+  .what .m { color: var(--muted); font-size: 12.5px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11.5px; font-weight: 600; }
+  .tag.queued { background: var(--info-bg); color: var(--info); }
+  .tag.posted { background: var(--ok-bg); color: var(--ok); }
+  .tag.failed { background: var(--bad-bg); color: var(--bad); }
+  .tag.skipped, .tag.pending, .tag.rendered { background: var(--idle-bg); color: var(--idle); }
+  .tag.posting, .tag.sharing { background: var(--warn-bg); color: var(--warn); }
+  .tag.next { background: var(--accent); color: var(--accent-ink); }
+  .tag.series { background: var(--idle-bg); color: var(--idle); font-weight: 500; }
+  .empty { padding: 34px 16px; text-align: center; color: var(--muted); }
+
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 0; border-top: 1px solid var(--line); }
+  .field:first-of-type { border-top: 0; }
+  .field > label:not(.switch) { flex: 1; min-width: 190px; }
+  .field > label:not(.switch) small { display: block; color: var(--muted); }
+  .field input[type=number] { width: 78px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .chip { background: var(--soft); border-radius: 14px; padding: 3px 4px 3px 10px; display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+  .chip button { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0 5px; font-size: 15px; line-height: 1; }
+  .prog { height: 6px; background: var(--idle-bg); border-radius: 3px; overflow: hidden; margin: 8px 0; }
+  .prog i { display: block; height: 100%; background: var(--ok); }
+
+  pre.log { background: #0e0e12; color: #d6d6e0; border-radius: 8px; padding: 12px; margin: 10px 0 0; height: 380px;
+            overflow: auto; font: 12.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent;
+          border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -1px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } .switch span, .switch span::after { transition: none; } }
+  .jobpill { display: flex; align-items: center; gap: 8px; background: var(--warn-bg); color: var(--warn);
+             padding: 4px 6px 4px 10px; border-radius: 8px; font-size: 13px; }
+
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 40; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--card); z-index: 41;
+            border-left: 1px solid var(--line); overflow-y: auto; padding: 16px; }
+  .drawer video { width: 100%; max-height: 46vh; background: #000; border-radius: 8px; }
+  .drawer h2 { margin: 0; font-size: 16px; }
+  .drawer .sub { color: var(--muted); margin: 2px 0 12px; }
+  .drawer .errbox { background: var(--bad-bg); color: var(--bad); border-radius: 8px; padding: 10px; font-size: 12.5px;
+                    white-space: pre-wrap; word-break: break-word; }
+  .drawer img.shot { width: 100%; border-radius: 8px; border: 1px solid var(--line); margin-top: 8px; }
+  .inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  #toasts { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 60; display: grid; gap: 8px; }
+  .toast { background: var(--text); color: var(--bg); padding: 9px 14px; border-radius: 8px; max-width: 80vw; }
+  .toast.bad { background: var(--bad); color: #fff; }
+  table.plain { width: 100%; border-collapse: collapse; }
+  table.plain td, table.plain th { text-align: left; padding: 6px 8px 6px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  table.plain th { color: var(--muted); font-weight: 500; border-top: 0; }
+  .urlline { word-break: break-all; }
+  @media (max-width: 640px) {
+    .row { grid-template-columns: 22px 40px minmax(0, 1fr); }
+    .row .grip { display: none; }
+    .row .acts { grid-column: 1 / -1; justify-content: flex-start; }
+    .selbar { top: 130px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">ReelPipe</div>
+      <div class="stats" id="stats"></div>
+      <div class="spacer"></div>
+      <div id="jobpill"></div>
+      <div class="auto">
+        <label class="switch" title="Post automatically at the scheduled times">
+          <input type="checkbox" id="auto" data-action="auto"><span></span>
+        </label>
+        <div><b>Auto-post</b><small id="autonote"></small></div>
+      </div>
+    </div>
+    <nav id="nav"></nav>
+  </div>
+</header>
+<main class="wrap" id="main"><div class="empty">Loading…</div></main>
+<div id="drawer"></div>
+<div id="toasts"></div>
+
+<script>
+"use strict";
+
+const S = {
+  data: null, view: "queue", filter: "queued", sel: new Set(), postN: 2,
+  drawer: null, drawerDirty: false, form: null, formDirty: false,
+  dragging: null, sig: {}, addSeries: null, lastError: null,
+};
+const VIEWS = [["queue", "Queue"], ["videos", "Videos"], ["add", "Add videos"],
+               ["schedule", "Schedule"], ["activity", "Activity"]];
+
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function toast(msg, bad) {
+  const el = document.createElement("div");
+  el.className = "toast" + (bad ? " bad" : "");
+  el.textContent = msg;
+  $("toasts").appendChild(el);
+  setTimeout(() => el.remove(), bad ? 6000 : 2600);
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-ReelPipe": "1" },
+    body: JSON.stringify(body || {}),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || ("request failed (" + res.status + ")"));
+  return json;
+}
+
+async function act(path, body, okMsg) {
+  try {
+    const out = await api(path, body);
+    if (okMsg) toast(typeof okMsg === "function" ? okMsg(out) : okMsg);
+    await refresh();
+    return out;
+  } catch (e) {
+    toast(e.message, true);
+    await refresh();
+    return null;
+  }
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/state");
+    S.data = await res.json();
+    S.lastError = null;
+  } catch (e) {
+    S.lastError = "Lost contact with ReelPipe. Is the terminal window still open?";
+  }
+  render();
+}
+
+/* ------------------------------------------------------------------ time */
+
+const pad = (n) => String(n).padStart(2, "0");
+function parse(iso) { return iso ? new Date(iso) : null; }
+function clock(d) { return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+function dayLabel(d) {
+  const now = new Date(S.data.now);
+  const a = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const b = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((a - b) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+}
+function when(iso) { const d = parse(iso); return d ? dayLabel(d) + " " + clock(d) : "—"; }
+function rel(iso) {
+  const d = parse(iso); if (!d) return "";
+  let mins = Math.round((d - new Date(S.data.now)) / 60000);
+  const late = mins < 0; mins = Math.abs(mins);
+  const txt = mins < 60 ? mins + " min" : mins < 2880 ? Math.floor(mins / 60) + "h " + (mins % 60) + "m"
+                                                      : Math.round(mins / 1440) + " days";
+  return late ? txt + " late" : "in " + txt;
+}
+function slotKey(iso) { return iso ? iso.slice(0, 16) : "none"; }
+function localInput(iso) { return iso ? iso.slice(0, 16) : ""; }
+
+/* ---------------------------------------------------------------- lookups */
+
+const clipsBy = (st) => S.data.clips.filter((c) => st.includes(c.status));
+const clip = (id) => S.data.clips.find((c) => c.id === id);
+const busy = () => !!(S.data.jobs.current && S.data.jobs.current.running);
+function title(c) { return "Part " + c.part_no + " of " + c.total_parts; }
+
+/* ----------------------------------------------------------------- render */
+
+function setHTML(id, html) {
+  if (S.sig[id] === html) return;
+  S.sig[id] = html;
+  $(id).innerHTML = html;
+}
+
+function render() {
+  if (!S.data) return;
+  if (S.dragging) return;
+  const d = S.data;
+
+  const c = d.counts;
+  setHTML("stats",
+    `<span><b>${c.queued}</b> queued</span><span><b>${c.posted}</b> posted</span>` +
+    (c.failed ? `<span><b>${c.failed}</b> failed</span>` : "") +
+    (c.skipped ? `<span><b>${c.skipped}</b> skipped</span>` : ""));
+
+  $("auto").checked = d.auto_post;
+  let note = "Off";
+  if (d.auto_post) {
+    note = d.auto_note ? d.auto_note : d.next_due ? "Next: " + when(d.next_due) : "Queue is empty";
+  }
+  $("autonote").textContent = note;
+
+  const job = d.jobs.current;
+  setHTML("jobpill", job && job.running
+    ? `<div class="jobpill"><span class="spin"></span> ${esc(job.title)}
+         <button class="btn small" data-action="view" data-view="activity">Log</button>
+         <button class="btn small danger" data-action="job-stop">Stop</button></div>`
+    : "");
+
+  setHTML("nav", VIEWS.map(([id, label]) => {
+    let badge = "";
+    if (id === "activity" && job && job.running) badge = `<span class="dot run">●</span>`;
+    else if (id === "queue" && c.failed) badge = `<span class="dot">${c.failed}</span>`;
+    else if (id === "add" && d.pending_urls.length) badge = `<span class="dot run">${d.pending_urls.length}</span>`;
+    return `<button data-action="view" data-view="${id}" class="${S.view === id ? "on" : ""}">${label}${badge}</button>`;
+  }).join(""));
+
+  let html = "";
+  if (S.lastError) html += `<div class="banner bad">${esc(S.lastError)}</div>`;
+  if (d.config_error) html += `<div class="banner bad"><b>config.toml has a problem:</b> ${esc(d.config_error)}</div>`;
+  html += ({ queue: viewQueue, videos: viewVideos, add: viewAdd, schedule: viewSchedule, activity: viewActivity }[S.view])();
+
+  const typing = document.activeElement && ["urls", "series"].includes(document.activeElement.id);
+  if (S.view === "schedule" && S.formDirty && S.sig.main) {
+    // Never redraw the settings form under someone who is typing in it.
+  } else if (S.view === "add" && typing && S.sig.main) {
+    // Same for the link box: a redraw would take the cursor away.
+  } else if (S.view === "activity") {
+    renderActivity(html);
+  } else {
+    setHTML("main", html);
+  }
+  renderDrawer();
+}
+
+/* ------------------------------------------------------------------ queue */
+
+function viewQueue() {
+  const d = S.data, c = d.counts;
+  const live = clipsBy(["posting", "sharing"]);
+  const lists = {
+    queued: clipsBy(["queued"]),
+    posted: clipsBy(["posted"]).sort((a, b) => (b.posted_at || "").localeCompare(a.posted_at || "")),
+    failed: clipsBy(["failed"]),
+    skipped: clipsBy(["skipped"]).sort((a, b) => a.video_id - b.video_id || a.part_no - b.part_no),
+  };
+  const shown = lists[S.filter];
+  // Selection only ever holds clips that are on screen.
+  for (const id of [...S.sel]) if (!shown.some((x) => x.id === id)) S.sel.delete(id);
+
+  let h = "";
+  if (d.overdue > 0 && S.filter === "queued") {
+    const gap = d.pacing ? d.pacing.min_gap_minutes : 45;
+    const per = d.pacing ? d.pacing.clips_per_slot : 1;
+    h += `<div class="banner warn"><div><b>${d.overdue} clip${d.overdue > 1 ? "s are" : " is"} past ${d.overdue > 1 ? "their" : "its"} time.</b>
+          With auto-post on, they go out ${per} at a time, ${gap} minutes apart, until caught up.</div>
+          <span class="spacer"></span>
+          <button class="btn" data-action="reschedule">Re-schedule from now</button></div>`;
+  }
+
+  h += `<div class="bar">
+    <div class="seg">
+      ${[["queued", "Up next", c.queued], ["posted", "Posted", c.posted], ["failed", "Failed", c.failed], ["skipped", "Skipped", c.skipped]]
+        .map(([id, label, n]) => `<button data-action="filter" data-filter="${id}" class="${S.filter === id ? "on" : ""}">${label} ${n}</button>`).join("")}
+    </div>
+    <span class="spacer"></span>
+    ${S.filter === "queued" && lists.queued.length ? `
+      <span>Post the next</span>
+      <span class="stepper"><button data-action="n-down" aria-label="fewer">−</button><output>${S.postN}</output><button data-action="n-up" aria-label="more">+</button></span>
+      <button class="btn primary" data-action="post-next" ${busy() ? "disabled" : ""}>Post now</button>` : ""}
+  </div>`;
+
+  if (S.sel.size) {
+    const n = S.sel.size;
+    const acts = {
+      queued: `<button class="btn" data-action="sel-post" ${busy() ? "disabled" : ""}>Post ${n} now, together</button>
+               <button class="btn" data-action="sel-skip">Skip</button>`,
+      failed: `<button class="btn" data-action="sel-post" ${busy() ? "disabled" : ""}>Try ${n} again now</button>
+               <button class="btn" data-action="sel-requeue">Back to queue</button>
+               <button class="btn" data-action="sel-posted">Mark as posted</button>
+               <button class="btn" data-action="sel-skip">Skip</button>`,
+      skipped: `<button class="btn" data-action="sel-unskip">Restore to queue</button>`,
+      posted: "",
+    }[S.filter];
+    h += `<div class="selbar"><b>${n} selected</b><span class="spacer"></span>${acts}
+          <button class="btn" data-action="sel-clear">Clear</button></div>`;
+  }
+
+  if (S.filter === "queued" && live.length) {
+    h += `<div class="slot"><b>Uploading now</b></div><div class="list">${live.map((x) => row(x, false)).join("")}</div>`;
+  }
+
+  if (!shown.length) {
+    const msg = { queued: "Nothing queued. Add videos to fill the queue.", posted: "Nothing posted yet.",
+                  failed: "No failures.", skipped: "Nothing skipped." }[S.filter];
+    return h + (live.length && S.filter === "queued" ? "" : `<div class="list"><div class="empty">${msg}</div></div>`);
+  }
+
+  if (S.filter !== "queued") {
+    return h + `<div class="list">${shown.map((x) => row(x, false)).join("")}</div>`;
+  }
+
+  // Up next: grouped by slot, so a batch reads as one unit.
+  const groups = [];
+  for (const x of shown) {
+    const key = slotKey(x.scheduled_for);
+    if (!groups.length || groups[groups.length - 1].key !== key) groups.push({ key, items: [] });
+    groups[groups.length - 1].items.push(x);
+  }
+  const now = new Date(d.now);
+  let first = true;
+  for (const g of groups) {
+    const t = parse(g.items[0].scheduled_for);
+    const late = t && t <= now;
+    h += `<div class="slot ${late ? "late" : ""}"><b>${t ? esc(dayLabel(t) + " · " + clock(t)) : "No time set"}</b>
+          <span>${g.items.length > 1 ? g.items.length + " clips together · " : ""}${t ? esc(rel(g.items[0].scheduled_for)) : ""}</span></div>
+          <div class="list">${g.items.map((x) => { const r = row(x, true, first); first = false; return r; }).join("")}</div>`;
+  }
+  return h;
+}
+
+function row(x, draggable, isNext) {
+  const sel = S.sel.has(x.id);
+  const st = x.status;
+  let acts = "";
+  if (st === "queued") {
+    acts = `<button class="btn small" data-action="post-one" data-id="${x.id}" ${busy() ? "disabled" : ""}>Post now</button>
+            ${isNext ? "" : `<button class="btn small" data-action="next" data-id="${x.id}">Make next</button>`}
+            <button class="btn small" data-action="skip" data-id="${x.id}">Skip</button>`;
+  } else if (st === "failed") {
+    acts = `<button class="btn small" data-action="requeue" data-id="${x.id}">Back to queue</button>
+            <button class="btn small" data-action="skip" data-id="${x.id}">Skip</button>`;
+  } else if (st === "skipped") {
+    acts = `<button class="btn small" data-action="unskip" data-id="${x.id}">Restore</button>`;
+  }
+  let meta = "";
+  if (st === "posted") meta = `<span class="tag posted">posted</span><span>${esc(when(x.posted_at))}</span>`;
+  else if (st === "failed") meta = `<span class="tag failed">failed at ${esc(x.last_failed_step || "?")}</span>`;
+  else if (st === "skipped") meta = `<span class="tag skipped">skipped</span>`;
+  else if (st === "posting" || st === "sharing") meta = `<span class="tag ${st}"><span class="spin"></span> ${st === "sharing" ? "sharing" : "uploading"}</span>`;
+  else if (isNext) meta = `<span class="tag next">NEXT</span>`;
+  const selectable = st === "queued" || st === "failed" || st === "skipped";
+  const firstLine = (x.caption || "").split("\n")[0];
+  return `<div class="row ${sel ? "sel" : ""}" data-id="${x.id}" ${draggable ? 'draggable="true"' : ""}>
+    ${selectable ? `<input type="checkbox" data-action="pick" data-id="${x.id}" ${sel ? "checked" : ""} aria-label="select">` : "<span></span>"}
+    <span class="grip ${draggable ? "" : "off"}" title="Drag to reorder">⋮⋮</span>
+    ${x.has_file ? `<img class="thumb" loading="lazy" alt="" src="/media/thumb/${x.id}" onerror="this.style.visibility='hidden'">` : `<span class="thumb"></span>`}
+    <div class="what">
+      <div class="t">${esc(title(x))} · ${esc(x.video_title)}</div>
+      <div class="c">${esc(firstLine)}</div>
+      <div class="m">${meta}<span class="tag series">${esc(x.series_id)}</span><span>${Math.round(x.duration_s)}s</span></div>
+    </div>
+    <div class="acts">${acts}</div>
+  </div>`;
+}
+
+/* ----------------------------------------------------------------- videos */
+
+function viewVideos() {
+  const d = S.data;
+  if (!d.videos.length) return `<div class="list"><div class="empty">No videos yet. Add some under “Add videos”.</div></div>`;
+  return `<div class="grid2">` + d.videos.map((v) => {
+    const mine = d.clips.filter((c) => c.video_id === v.id);
+    const n = (st) => mine.filter((c) => c.status === st).length;
+    const total = mine.length, posted = n("posted"), queued = n("queued"), failed = n("failed"), skipped = n("skipped");
+    const parts = [];
+    if (queued) parts.push(queued + " queued");
+    if (failed) parts.push(failed + " failed");
+    if (skipped) parts.push(skipped + " skipped");
+    if (!total) parts.push(v.status === "pending" ? "waiting to download" : v.status === "failed" ? "download failed" : "not split yet");
+    return `<div class="card">
+      <h2>${esc(v.title || v.youtube_id)}</h2>
+      <div class="count"><span class="tag series">${esc(v.series_id)}</span> ·
+        ${v.duration_s ? Math.round(v.duration_s / 60) + " min · " : ""}<a href="${esc(v.url)}" target="_blank" rel="noopener">YouTube</a></div>
+      <div class="prog"><i style="width:${total ? Math.round(posted * 100 / total) : 0}%"></i></div>
+      <div class="count">${total ? posted + " of " + total + " parts posted" + (parts.length ? " · " : "") : ""}${esc(parts.join(" · "))}</div>
+      <div class="inline" style="margin-top:12px">
+        ${queued + failed ? `<button class="btn small" data-action="video-skip" data-id="${v.id}">Skip the rest</button>` : ""}
+        ${skipped ? `<button class="btn small" data-action="video-unskip" data-id="${v.id}">Restore skipped</button>` : ""}
+        <span class="spacer"></span>
+        <button class="btn small danger" data-action="video-remove" data-id="${v.id}">Remove</button>
+      </div>
+    </div>`;
+  }).join("") + `</div>`;
+}
+
+/* -------------------------------------------------------------------- add */
+
+function viewAdd() {
+  const d = S.data;
+  const series = d.series || [];
+  if (S.addSeries === null) S.addSeries = (series.find((s) => s.default) || series[0] || {}).id || "";
+  const keep = $("urls") ? $("urls").value : "";
+  return `<div class="card">
+    <h2>1. Paste YouTube links</h2>
+    <p class="help">One per line. Pick the series they belong to: that decides the overlay text, caption, hashtags and part length.</p>
+    <textarea id="urls" rows="5" placeholder="https://www.youtube.com/watch?v=...">${esc(keep)}</textarea>
+    <div class="inline" style="margin-top:10px">
+      <label for="series">Series</label>
+      <select id="series" data-action="series">${series.map((s) =>
+        `<option value="${esc(s.id)}" ${s.id === S.addSeries ? "selected" : ""}>${esc(s.id)} — ${esc(s.title)}</option>`).join("")}</select>
+      <button class="btn primary" data-action="urls-add">Add to list</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>2. Download and prepare</h2>
+    <p class="help">Downloads each video, cuts it into parts, burns on the overlay, writes captions and gives every clip a slot.</p>
+    ${d.pending_urls.length ? `<table class="plain"><tr><th>Waiting</th><th>Series</th><th></th></tr>
+      ${d.pending_urls.map((u) => `<tr><td class="urlline">${esc(u.url)}</td><td>${esc(u.series_id || "(default)")}</td>
+        <td><button class="btn small" data-action="url-remove" data-url="${esc(u.url)}">Remove</button></td></tr>`).join("")}</table>`
+      : `<div class="count">Nothing waiting.</div>`}
+    <div class="inline" style="margin-top:12px">
+      <button class="btn primary" data-action="job" data-kind="prepare" ${busy() || !d.pending_urls.length ? "disabled" : ""}>
+        Download &amp; prepare ${d.pending_urls.length || ""}</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Series</h2>
+    <p class="help">Defined in <code>config.toml</code>. To add one, copy a <code>[[series]]</code> block there and give it a new id.</p>
+    <table class="plain"><tr><th>Id</th><th>Title</th><th>Part length</th><th>Hashtags</th></tr>
+      ${series.map((s) => `<tr><td><b>${esc(s.id)}</b>${s.default ? " (default)" : ""}</td><td>${esc(s.title)}</td>
+        <td>${s.part_seconds}s</td><td>${s.hashtags}</td></tr>`).join("")}</table>
+  </div>`;
+}
+
+/* --------------------------------------------------------------- schedule */
+
+function viewSchedule() {
+  const d = S.data;
+  if (!d.pacing) return `<div class="list"><div class="empty">Fix config.toml to edit the schedule.</div></div>`;
+  if (!S.form || !S.formDirty) {
+    S.form = JSON.parse(JSON.stringify(d.pacing));
+    S.form.human_enabled = d.human.enabled;
+  }
+  const f = S.form;
+  const perDay = f.post_times.length * f.clips_per_slot;
+  const queued = d.counts.queued;
+  const days = perDay ? Math.ceil(queued / perDay) : 0;
+  return `<div class="grid2">
+  <div class="card">
+    <h2>When to post</h2>
+    <p class="help">Each post time is one browser session.</p>
+    <div class="field"><label>Post times<small>Every day, at these times</small></label>
+      <div class="chips">${f.post_times.map((t) =>
+        `<span class="chip">${esc(t)}<button data-action="time-del" data-time="${esc(t)}" aria-label="remove ${esc(t)}">×</button></span>`).join("")}
+        <input type="time" id="newtime" aria-label="new post time"><button class="btn small" data-action="time-add">Add</button></div></div>
+    <div class="field"><label>Clips per post time<small>Uploaded back to back in the same session</small></label>
+      <span class="stepper"><button data-action="per-down" aria-label="fewer">−</button><output>${f.clips_per_slot}</output><button data-action="per-up" aria-label="more">+</button></span></div>
+    <div class="field"><label>Pause between clips in a batch<small>Seconds, picked at random in this range</small></label>
+      <input type="number" min="0" aria-label="shortest pause, seconds" data-form="gap0" value="${f.batch_gap_seconds[0]}"> – <input type="number" min="0" aria-label="longest pause, seconds" data-form="gap1" value="${f.batch_gap_seconds[1]}"></div>
+    <div class="field"><label>Shift each time at random<small>± minutes, so posts don't land on the dot</small></label>
+      <input type="number" min="0" aria-label="random shift, minutes" data-form="jitter_minutes" value="${f.jitter_minutes}"></div>
+    <div class="field"><label>Minimum gap between sessions<small>Minutes. Also the pace for catching up when behind</small></label>
+      <input type="number" min="0" aria-label="minimum gap, minutes" data-form="min_gap_minutes" value="${f.min_gap_minutes}"></div>
+    <div class="field"><label>Tries before giving up on a clip</label>
+      <input type="number" min="1" aria-label="tries" data-form="max_attempts" value="${f.max_attempts}"></div>
+    <div class="field"><label>Human pacing<small>Scroll, move and type like a person. Off is faster, for fixing selectors</small></label>
+      <label class="switch"><input type="checkbox" aria-label="human pacing" data-form="human_enabled" ${f.human_enabled ? "checked" : ""}><span></span></label></div>
+    <p class="count" style="margin:12px 0">${perDay} clip${perDay === 1 ? "" : "s"} a day. ${queued ? `The ${queued} queued would take about ${days} day${days === 1 ? "" : "s"}.` : ""}</p>
+    <div class="inline">
+      <button class="btn primary" data-action="save-resched">Save &amp; re-schedule queue</button>
+      <button class="btn" data-action="save">Save only</button>
+      ${S.formDirty ? `<button class="btn" data-action="form-reset">Undo changes</button>` : ""}
+    </div>
+    <p class="count" style="margin:10px 0 0">“Save only” keeps the times already given to queued clips.</p>
+  </div>
+  <div>
+    <div class="card">
+      <h2>Auto-post</h2>
+      <p class="help">When on, due clips are posted on their own while this panel is running. The switch is at the top of every page.</p>
+      <div class="field"><label>Keep posting with this panel closed<small>${d.task.supported
+          ? "Adds a Windows scheduled task that checks every 10 minutes while you're logged in. It follows the same auto-post switch."
+          : "Available on Windows when running from the project folder."}</small></label>
+        ${d.task.supported ? (d.task.installed
+          ? `<span class="tag posted">installed</span><button class="btn small" data-action="task" data-install="0">Remove</button>`
+          : `<button class="btn small" data-action="task" data-install="1">Install</button>`) : ""}</div>
+    </div>
+    <div class="card">
+      <h2>Tools</h2>
+      <div class="field"><label>Instagram login<small>Opens Chrome so you can sign in by hand. Needed once, and again if the session expires</small></label>
+        <button class="btn small" data-action="job" data-kind="login" ${busy() ? "disabled" : ""}>Open login</button></div>
+      <div class="field"><label>System check<small>Confirms ffmpeg, yt-dlp, Playwright and the config are all in order</small></label>
+        <button class="btn small" data-action="job" data-kind="doctor" ${busy() ? "disabled" : ""}>Run check</button></div>
+      <div class="field"><label>Re-schedule queue from now<small>Keeps the order, hands out fresh times using the saved settings</small></label>
+        <button class="btn small" data-action="reschedule">Re-schedule</button></div>
+    </div>
+  </div></div>`;
+}
+
+/* --------------------------------------------------------------- activity */
+
+function viewActivity() { return ""; }
+
+function renderActivity(prefix) {
+  const d = S.data, job = d.jobs.current;
+  const failed = clipsBy(["failed"]);
+  const shell = prefix + `<div class="card"><div class="inline"><h2 id="jobtitle" style="margin:0"></h2><span class="spacer"></span><span id="jobctl"></span></div>
+      <div class="count" id="jobmeta"></div><pre class="log" id="log" tabindex="0"></pre></div>
+    <div id="jobhist"></div><div id="fails"></div>`;
+  if (S.sig.main !== "activity:" + prefix) {
+    S.sig.main = "activity:" + prefix;
+    $("main").innerHTML = shell;
+    S.sig.jobhist = S.sig.fails = S.sig.jobctl = null;
+  }
+  $("jobtitle").textContent = job ? job.title : "No job has run yet";
+  let meta = "Jobs you start (prepare, post, login, check) show their output here.";
+  if (job) {
+    meta = job.running ? "Running since " + clock(parse(job.started))
+      : (job.stopped ? "Stopped" : job.exit_code === 0 ? "Finished" : "Ended with an error (exit " + job.exit_code + ")")
+        + " at " + clock(parse(job.ended));
+  }
+  $("jobmeta").textContent = meta;
+  setHTML("jobctl", job && job.running ? `<button class="btn danger" data-action="job-stop">Stop</button>` : "");
+
+  const log = $("log");
+  const text = job ? job.log.join("\n") : "";
+  if (log.textContent !== text) {
+    const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+    log.textContent = text;
+    if (stick) log.scrollTop = log.scrollHeight;
+  }
+
+  setHTML("jobhist", d.jobs.history.length ? `<h3>Earlier</h3><div class="list">` + d.jobs.history.map((j) =>
+    `<div class="row" style="grid-template-columns:1fr auto;cursor:default"><div><b>${esc(j.title)}</b>
+      <div class="c">${esc((j.log.filter((l) => l.trim()).slice(-1)[0]) || "")}</div></div>
+      <div class="count">${esc(when(j.started))} · ${j.stopped ? "stopped" : j.exit_code === 0 ? "ok" : "error"}</div></div>`).join("") + `</div>` : "");
+
+  setHTML("fails", failed.length ? `<h3>Failed clips</h3><div class="list">` + failed.map((x) =>
+    `<div class="row" data-id="${x.id}" style="grid-template-columns:1fr auto">
+      <div><b>${esc(title(x))} · ${esc(x.video_title)}</b>
+      <div class="c">${esc(x.last_failed_step)}: ${esc((x.last_error || "").split("\n")[0])}</div></div>
+      <div class="acts"><button class="btn small" data-action="open" data-id="${x.id}">Details</button></div></div>`).join("") + `</div>` : "");
+}
+
+/* ----------------------------------------------------------------- drawer */
+
+function openDrawer(id) { S.drawer = id; S.drawerDirty = false; S.drawerStatus = null; S.sig.drawer = null; renderDrawer(); }
+function closeDrawer() { S.drawer = null; S.drawerDirty = false; setHTML("drawer", ""); }
+
+function renderDrawer() {
+  if (S.drawer === null) return;
+  const x = clip(S.drawer);
+  if (!x) { closeDrawer(); return; }
+  // Leave the drawer alone while its fields hold unsaved edits, unless the
+  // clip's status changed underneath (e.g. it just got posted).
+  if (S.drawerDirty && S.drawerStatus === x.status) return;
+  S.drawerStatus = x.status;
+  S.drawerDirty = false;
+  const editable = !["posted", "posting", "sharing"].includes(x.status);
+  const html = `<div class="scrim" data-action="drawer-close"></div>
+  <aside class="drawer" role="dialog" aria-label="Clip details">
+    <div class="inline"><div><h2>${esc(title(x))}</h2></div><span class="spacer"></span>
+      <button class="btn small" data-action="drawer-close">Close</button></div>
+    <div class="sub">${esc(x.video_title)} · <span class="tag ${esc(x.status)}">${esc(x.status)}</span></div>
+    ${x.has_file ? `<video controls preload="metadata" src="/media/clip/${x.id}"></video>` : ""}
+    ${x.status === "failed" ? `<h3>What went wrong</h3><div class="errbox"><b>Step: ${esc(x.last_failed_step)}</b>\n${esc(x.last_error)}</div>
+      ${x.failure_shot ? `<a href="/media/failure/${esc(x.failure_shot)}" target="_blank"><img class="shot" alt="Screenshot at the moment it failed" src="/media/failure/${esc(x.failure_shot)}"></a>` : ""}
+      <div class="inline" style="margin-top:10px">
+        <button class="btn small" data-action="requeue" data-id="${x.id}">Back to queue</button>
+        <button class="btn small" data-action="mark-posted" data-id="${x.id}">It did post — mark as posted</button></div>` : ""}
+    ${x.status === "posted" ? `<h3>Posted</h3><div>${esc(when(x.posted_at))}</div>` : ""}
+    ${x.status === "queued" ? `<h3>Scheduled for</h3><div class="inline">
+        <input type="datetime-local" id="dtime" value="${esc(localInput(x.scheduled_for))}">
+        <button class="btn small" data-action="save-time" data-id="${x.id}">Set time</button></div>` : ""}
+    <h3>Caption</h3>
+    <textarea id="dcap" rows="8" ${editable ? "" : "readonly"} data-drawer="1">${esc(x.caption)}</textarea>
+    <div class="inline" style="margin-top:6px"><span class="count" id="dcount">${(x.caption || "").length} / 2,200</span><span class="spacer"></span>
+      ${editable ? `<button class="btn small primary" data-action="save-caption" data-id="${x.id}">Save caption</button>` : ""}</div>
+    <h3>Text on the video</h3><div style="white-space:pre-wrap">${esc(x.overlay_text)}</div>
+    <div class="count" style="margin-top:14px">Clip ${x.id} · ${Math.round(x.duration_s)}s · tries ${x.attempts}</div>
+  </aside>`;
+  setHTML("drawer", html);
+}
+
+/* ---------------------------------------------------------------- actions */
+
+function gatherForm() {
+  const f = S.form;
+  document.querySelectorAll("[data-form]").forEach((el) => {
+    const k = el.dataset.form;
+    if (k === "human_enabled") f.human_enabled = el.checked;
+    else if (k === "gap0") f.batch_gap_seconds[0] = Number(el.value);
+    else if (k === "gap1") f.batch_gap_seconds[1] = Number(el.value);
+    else f[k] = Number(el.value);
+  });
+}
+function redrawForm() { S.sig.main = null; setHTML("main", viewSchedule()); }
+
+async function saveSettings(resched) {
+  gatherForm();
+  const out = await (async () => {
+    try { return await api("/api/settings", Object.assign({}, S.form, { reschedule: resched })); }
+    catch (e) { toast(e.message, true); return null; }
+  })();
+  if (!out) return;
+  S.formDirty = false; S.form = null; S.sig.main = null;
+  toast(resched ? "Saved. " + out.rescheduled + " clips re-scheduled." : "Saved.");
+  await refresh();
+}
+
+async function startJob(body, question) {
+  if (question && !confirm(question)) return;
+  const out = await act("/api/job/start", body);
+  if (out) { S.view = "activity"; S.sel.clear(); render(); }
+}
+
+const ACTIONS = {
+  view: (el) => { S.view = el.dataset.view; S.sig.main = null; if (S.view !== "schedule") { S.formDirty = false; S.form = null; } render(); window.scrollTo(0, 0); },
+  filter: (el) => { S.filter = el.dataset.filter; S.sel.clear(); render(); },
+  "n-up": () => { S.postN = Math.min(10, S.postN + 1); render(); },
+  "n-down": () => { S.postN = Math.max(1, S.postN - 1); render(); },
+  pick: (el) => { const id = +el.dataset.id; el.checked ? S.sel.add(id) : S.sel.delete(id); render(); },
+  "sel-clear": () => { S.sel.clear(); render(); },
+  "sel-post": () => {
+    const ids = shownOrder().filter((id) => S.sel.has(id));
+    startJob({ kind: "post_ids", ids }, "Post " + ids.length + " clip" + (ids.length > 1 ? "s" : "") + " to Instagram now, one after another?");
+  },
+  "sel-skip": async () => { const n = S.sel.size; await act("/api/clips/skip", { ids: [...S.sel] }, n + " skipped"); S.sel.clear(); render(); },
+  "sel-unskip": async () => { await act("/api/clips/unskip", { ids: [...S.sel] }, "Restored to the queue"); S.sel.clear(); render(); },
+  "sel-requeue": async () => { await act("/api/clips/requeue", { ids: [...S.sel] }, "Back in the queue"); S.sel.clear(); render(); },
+  "sel-posted": async () => {
+    if (!confirm("Mark " + S.sel.size + " clip(s) as posted? Do this only if you can see them on the profile.")) return;
+    await act("/api/clips/mark-posted", { ids: [...S.sel] }, "Marked as posted"); S.sel.clear(); render();
+  },
+  "post-next": () => startJob({ kind: "post_next", n: S.postN },
+    "Post the next " + S.postN + " clip" + (S.postN > 1 ? "s" : "") + " to Instagram now" + (S.postN > 1 ? ", one after another?" : "?")),
+  "post-one": (el) => startJob({ kind: "post_ids", ids: [+el.dataset.id] }, "Post this clip to Instagram now?"),
+  next: (el) => act("/api/clips/next", { id: +el.dataset.id }, "Moved to the front"),
+  skip: (el) => act("/api/clips/skip", { ids: [+el.dataset.id] }, "Skipped"),
+  unskip: (el) => act("/api/clips/unskip", { ids: [+el.dataset.id] }, "Restored to the queue"),
+  requeue: (el) => act("/api/clips/requeue", { ids: [+el.dataset.id] }, "Back in the queue"),
+  "mark-posted": (el) => { if (confirm("Mark as posted? Do this only if you can see it on the profile.")) act("/api/clips/mark-posted", { ids: [+el.dataset.id] }, "Marked as posted"); },
+  open: (el) => openDrawer(+el.dataset.id),
+  "drawer-close": () => closeDrawer(),
+  "save-caption": async (el) => {
+    const out = await act("/api/clips/caption", { id: +el.dataset.id, caption: $("dcap").value }, "Caption saved");
+    if (out) { S.drawerDirty = false; renderDrawer(); }
+  },
+  "save-time": async (el) => {
+    const v = $("dtime").value;
+    if (!v) return toast("Pick a date and time", true);
+    const out = await act("/api/clips/time", { id: +el.dataset.id, when: v }, "Time set");
+    if (out) { S.drawerDirty = false; renderDrawer(); }
+  },
+  reschedule: () => { if (confirm("Give every queued clip a fresh time starting from now? The order stays the same.")) act("/api/reschedule", {}, (o) => o.changed + " clips re-scheduled"); },
+  auto: (el) => act("/api/auto", { enabled: el.checked }, el.checked ? "Auto-post is on" : "Auto-post is off"),
+  "job-stop": () => { if (confirm("Stop the running job? A clip that is mid-upload goes back to the queue, unless Share was already clicked.")) act("/api/job/stop", {}, "Stopping…"); },
+  job: (el) => startJob({ kind: el.dataset.kind }),
+  series: (el) => { S.addSeries = el.value; },
+  "urls-add": async () => {
+    const out = await act("/api/urls/add", { urls: $("urls").value, series_id: $("series").value },
+      (o) => o.added + " added" + (o.skipped ? ", " + o.skipped + " already there" : ""));
+    if (out) { $("urls").value = ""; S.sig.main = null; render(); }
+  },
+  "url-remove": (el) => act("/api/urls/remove", { url: el.dataset.url }, "Removed"),
+  "video-skip": (el) => act("/api/videos/skip", { id: +el.dataset.id }, (o) => o.changed + " clips skipped"),
+  "video-unskip": (el) => act("/api/videos/unskip", { id: +el.dataset.id }, (o) => o.changed + " clips restored"),
+  "video-remove": (el) => {
+    if (confirm("Remove this video from ReelPipe? Its clips, its download and its place in the queue are deleted. Posts already on Instagram are not touched.")) act("/api/videos/remove", { id: +el.dataset.id }, "Removed");
+  },
+  "time-add": () => {
+    gatherForm();
+    const v = $("newtime").value;
+    if (!v) return toast("Pick a time first", true);
+    if (!S.form.post_times.includes(v)) S.form.post_times.push(v);
+    S.form.post_times.sort(); S.formDirty = true; redrawForm();
+  },
+  "time-del": (el) => { gatherForm(); S.form.post_times = S.form.post_times.filter((t) => t !== el.dataset.time); S.formDirty = true; redrawForm(); },
+  "per-up": () => { gatherForm(); S.form.clips_per_slot = Math.min(10, S.form.clips_per_slot + 1); S.formDirty = true; redrawForm(); },
+  "per-down": () => { gatherForm(); S.form.clips_per_slot = Math.max(1, S.form.clips_per_slot - 1); S.formDirty = true; redrawForm(); },
+  save: () => saveSettings(false),
+  "save-resched": () => saveSettings(true),
+  "form-reset": () => { S.formDirty = false; S.form = null; S.sig.main = null; render(); },
+  task: (el) => {
+    const install = el.dataset.install === "1";
+    if (install && !confirm("Add a Windows scheduled task named “ReelPipe”? It runs every 10 minutes while you are logged in and posts what is due when auto-post is on.")) return;
+    act("/api/task", { install }, install ? "Background task installed" : "Background task removed");
+  },
+};
+
+function shownOrder() {
+  return [...document.querySelectorAll("#main .row[data-id]")].map((r) => +r.dataset.id);
+}
+
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-action]");
+  if (el) {
+    if (el.tagName === "INPUT" && el.type === "checkbox") return; // handled on change
+    if (el.tagName === "SELECT") return;
+    e.preventDefault();
+    const fn = ACTIONS[el.dataset.action];
+    if (fn) fn(el);
+    return;
+  }
+  const r = e.target.closest("#main .row[data-id]");
+  if (r && !e.target.closest("button, input, a")) openDrawer(+r.dataset.id);
+});
+document.addEventListener("change", (e) => {
+  const el = e.target;
+  if (el.dataset && el.dataset.action && (el.type === "checkbox" || el.tagName === "SELECT")) {
+    const fn = ACTIONS[el.dataset.action]; if (fn) fn(el);
+  }
+  if (el.dataset && el.dataset.form) { S.formDirty = true; gatherForm(); if (el.type === "checkbox") redrawForm(); }
+});
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (el.dataset && el.dataset.form && el.type !== "checkbox") S.formDirty = true;
+  if (el.id === "dcap") { S.drawerDirty = true; $("dcount").textContent = el.value.length + " / 2,200"; }
+  if (el.id === "dtime") S.drawerDirty = true;
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.drawer !== null) closeDrawer(); });
+
+/* ------------------------------------------------------------ drag to reorder */
+
+document.addEventListener("dragstart", (e) => {
+  const r = e.target.closest && e.target.closest(".row[draggable=true]");
+  if (!r) return;
+  S.dragging = +r.dataset.id;
+  r.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", String(S.dragging));
+});
+function clearMarks() { document.querySelectorAll(".over-top, .over-bottom").forEach((x) => x.classList.remove("over-top", "over-bottom")); }
+document.addEventListener("dragover", (e) => {
+  if (S.dragging === null) return;
+  const r = e.target.closest && e.target.closest(".row[draggable=true]");
+  if (!r) return;
+  e.preventDefault();
+  clearMarks();
+  const box = r.getBoundingClientRect();
+  r.classList.add(e.clientY < box.top + box.height / 2 ? "over-top" : "over-bottom");
+});
+document.addEventListener("drop", async (e) => {
+  if (S.dragging === null) return;
+  const r = e.target.closest && e.target.closest(".row[draggable=true]");
+  const moved = S.dragging;
+  if (r && +r.dataset.id !== moved) {
+    e.preventDefault();
+    const box = r.getBoundingClientRect();
+    const after = e.clientY >= box.top + box.height / 2;
+    const ids = clipsBy(["queued"]).map((c) => c.id).filter((id) => id !== moved);
+    const at = ids.indexOf(+r.dataset.id) + (after ? 1 : 0);
+    ids.splice(at, 0, moved);
+    S.dragging = null; clearMarks();
+    await act("/api/queue/reorder", { ids }, "Order updated");
+    return;
+  }
+  S.dragging = null; clearMarks(); render();
+});
+document.addEventListener("dragend", () => {
+  if (S.dragging !== null) { S.dragging = null; clearMarks(); S.sig.main = null; render(); }
+  document.querySelectorAll(".dragging").forEach((x) => x.classList.remove("dragging"));
+});
+
+refresh();
+setInterval(refresh, 2500);
+</script>
+</body>
+</html>
